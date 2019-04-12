@@ -1,0 +1,325 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: A sample template
+
+Metadata:
+  'AWS::CloudFormation::Interface':
+    ParameterGroups:
+    - Label:
+        default: Network
+      Parameters:
+      - defaultVpc
+      - SecurityGroupName
+      - SSHLocation
+    - Label:
+        default: Objects
+      Parameters:
+      - BucketName
+    - Label:
+        default: Compute
+      Parameters:
+      - KeyName
+      - InstanceType
+      - InstanceProfileName
+
+Parameters:
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instance
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: Must be the name of an existing EC2 KeyPair
+
+  SSHLocation:
+    Description: The IP address range that can be used to SSH to the EC2 instances
+    Type: String
+    MinLength: 9
+    MaxLength: 18
+    Default: "0.0.0.0/0"
+    AllowedPattern: "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})"
+    ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x.
+
+  InstanceType:
+    Description: EC2 instance type
+    Type: String
+    Default: t2.micro
+    AllowedValues:
+      - t2.micro
+      - t2.small
+      - t2.medium
+      - t2.large
+    ConstraintDescription: must be a valid EC2 instance type
+
+  BucketName:
+    Description: Name for new S3 bucket
+    Type: String
+    Default: iam-list-output
+    ConstraintDescription: S3 bucket name should be in lowercase only.
+
+  InstanceProfileName:
+    Description: Provide a new name for the EC2 instance policy.
+    Type: String
+    Default: iam-output-role
+
+  defaultVpc:
+    Description: Select your default VPC 
+    Type: AWS::EC2::VPC::Id
+
+  SecurityGroupName:
+    Description: Providing a name for the new security group.
+    Type: String
+    Default: SSHAccessToInstance
+    MinLength: 5
+    MaxLength: 20
+    ConstraintDescription: Please use letters and/or numbers only for the security group name.    
+
+Mappings:
+  AWSInstanceType2Arch:
+    t2.micro:
+      Arch: HVM64
+    t2.small:
+      Arch: HVM64    
+    t2.medium:
+      Arch: HVM64    
+    t2.large:
+      Arch: HVM64    
+
+  AWSRegionArch2AMI:
+    us-east-1:
+      HVM64: ami-0ff8a91507f77f867
+    us-east-2:
+      HVM64: ami-0b59bfac6be064b78    
+    us-west-1:
+      HVM64: ami-0bdb828fd58c52235
+    us-west-2:
+      HVM64: ami-a0cfeed8
+
+Resources:
+  # -- EC2 Instance -- #
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Metadata:
+      AWS::CloudFormation::Init:
+        configSets:
+          install:
+            - install_cfn
+            - output_file
+
+        install_cfn:
+          files:
+            /etc/cfn/cfn-hup.conf:
+              content: !Join
+                  - ''
+                  - - |
+                      [main]
+                    - stack=
+                    - !Ref 'AWS::StackId'
+                    - |+
+
+                    - region=
+                    - !Ref 'AWS::Region'
+                    - |+
+
+              mode: '000400'
+              owner: root
+              group: root
+
+            /etc/cfn/hooks.d/cfn-auto-reloader.conf:
+              content: !Join
+                  - ''
+                  - - |
+                      [cfn-auto-reloader-hook]
+                    - |
+                      triggers=post.update
+                    - |
+                    - path=Resources.EC2Instance.Metadata:CloudFormation::Init
+                    - 'action=/opt/aws/bin/cfn-init -v '
+                    - '         --stack '
+                    - !Ref 'AWS::StackName'
+                    - '         --resource EC2Instance '
+                    - '         --configsets install '
+                    - '        --region ' 
+                    - !Ref 'AWS::Region'
+                    - |+
+
+              mode: "000400"
+              owner: root
+              group: root
+
+        output_file:
+          files:
+            /tmp/output.sh:
+              content:  !Join
+                - ''
+                - - |
+                    #/bin/bash -xe
+                  - |
+                    # Grab Master Account Id to name S3 bucket
+                    accountId=$(aws organizations describe-organization --query 'Organization.MasterAccountId' --output text)
+                  - |
+                    # Get the S3 bucket name from CloudFormation template
+                    bucketname=$(iam-list-output)              
+                  - |
+                    # Grab all IAM users
+                    aws iam get-account-authorization-details --query 'UserDetailList[*]' --output text > /tmp/$accountId-output.csv
+                  - |
+                    # Upload output file to existing S3 bucket
+                    aws s3 cp /tmp/$accountId-output.csv s3://$bucketname/$accountId-output.csv
+                  - |+
+
+              mode: "000744"
+              owner: root
+              group: root
+        
+          commands:
+            01_read_execute_file:
+              command: chmod +x /tmp/output.sh
+              cwd: /tmp
+            02_run_file:
+              command: /tmp/output.sh
+              cwd: /tmp
+
+    Properties:
+      InstanceType:
+        Ref: InstanceType 
+      ImageId: !FindInMap
+        - AWSRegionArch2AMI
+        - !Ref 'AWS::Region'
+        - !FindInMap
+          - AWSInstanceType2Arch
+          - !Ref InstanceType
+          - Arch
+      IamInstanceProfile:
+        Ref: myInstanceProfile
+      BlockDeviceMappings: 
+        - 
+          DeviceName: /dev/xvda
+          Ebs: 
+            VolumeType: gp2
+            DeleteOnTermination: true
+            VolumeSize: "8"        
+      KeyName: 
+        Ref: KeyName
+      Tags:
+        -
+          Key: Name
+          Value: IAMOutputInstance
+      SecurityGroups:
+         - Ref: SecurityGroupName
+      UserData: !Base64
+          'Fn::Join':
+            - ''
+            - - |
+                #!/bin/bash -xe
+              - |
+                yum update -y aws-cfn-bootstrap
+              - '/opt/aws/bin/cfn-init -v '
+              - '         --stack '
+              - !Ref 'AWS::StackName'
+              - '         --resource EC2Instance '
+              - '         --configsets install '
+              - '         --region '
+              - !Ref 'AWS::Region'
+              - |+
+            
+              - '/opt/aws/bin/cfn-signal -e $? '
+              - '         --stack ' 
+              - !Ref 'AWS::StackName'
+              - '         --resource EC2Instance '
+              - '         --region ' 
+              - !Ref 'AWS::Region'
+              - |+
+
+  # -- IAM Role -- #
+  myInstanceRole:
+      Type: AWS::IAM::Role
+      Properties:
+        Path: "/"
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - 
+            Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action: 
+              - sts:AssumeRole
+        ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/AmazonS3FullAccess
+          - arn:aws:iam::aws:policy/IAMReadOnlyAccess
+          - arn:aws:iam::aws:policy/AWSOrganizationsReadOnlyAccess
+
+  myInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+        -
+          Ref: myInstanceRole
+      InstanceProfileName: !Ref InstanceProfileName
+
+  # -- Security Group -- #
+  newSecurityGroup:
+    Type:  AWS::EC2::SecurityGroup
+    Properties:
+      GroupName:
+        !Ref SecurityGroupName
+      GroupDescription: Security Group for SSH access only
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+      Tags:
+        -
+          Key: Purpose
+          Value: SSH Access to EC2 instance via public access
+      VpcId:
+        !Ref defaultVpc
+
+  # -- S3 Bucket -- #
+  myS3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      AccessControl: PublicRead
+      BucketName: !Ref BucketName
+      WebsiteConfiguration:
+        ErrorDocument: error.html
+        IndexDocument: index.html
+      Tags:
+        -
+          Key: Name
+          Value: !Ref BucketName
+
+        -
+          Key: Created By
+          Value: AWS System Engineer Team
+
+  # -- S3 Bucket Policy --#
+  myS3BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref BucketName
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - 
+            Action: 
+              - 's3:GetObject'
+            Effect: 'Allow'
+            Resource: !Join
+              - ''
+              -
+                - 'arn:aws:s3:::'
+                -
+                  !Ref BucketName
+                - '/*'
+            Principal: '*'
+
+Outputs:
+  BucketName:
+    Description: Name of the S3 bucket
+    Value: !Ref BucketName                    
+  BucketNameURL:
+    Description: URL for website hosted on S3
+    Value: !GetAtt
+      - myS3BucketPolicy
+      - BuckeNameURL

@@ -1,0 +1,12 @@
+# Ignore all YAML starter files
+
+iam.yaml
+s3.yaml
+sg.yaml
+old_template.yaml
+
+# Ignore all script files
+iam_output.sh
+
+# Ignore misc files
+users.py
