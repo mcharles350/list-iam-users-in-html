@@ -166,6 +166,14 @@ Resources:
                     # Upload index.html file from GitHub
                     curl -O --http1.1 https://github.com/mcharles350/list-iam-users-in-html/blob/master/index.html --output /tmp/index.html
                     aws s3 cp /tmp/index.html s3://$bucketname/index.html
+                  - |
+                    # Upload error.html file from GitHub                    
+                    curl -O --http1.1 https://github.com/mcharles350/list-iam-users-in-html/blob/master/error.html --output /tmp/error.html
+                    aws s3 cp /tmp/error.html s3://$bucketname/error.html
+                  - |
+                    # Upload main.css file from GitHub                    
+                    curl -O --http1.1 https://github.com/mcharles350/list-iam-users-in-html/blob/master/index.html --output /tmp/main.css
+                    aws s3 cp /tmp/main.css s3://$bucketname/main.css                                                       
                   - |+
 
               mode: "000744"
