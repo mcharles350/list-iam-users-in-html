@@ -50,7 +50,7 @@ Parameters:
   BucketName:
     Description: Name for new S3 bucket
     Type: String
-    Default: iam-list-output
+    Default: iam-output
     ConstraintDescription: S3 bucket name should be in lowercase only.
 
   InstanceProfileName:
@@ -162,6 +162,10 @@ Resources:
                   - |
                     # Upload output file to existing S3 bucket
                     aws s3 cp /tmp/$accountId-output.csv s3://$bucketname/$accountId-output.csv
+                  - |
+                    # Upload index.html file from GitHub
+                    curl -O --http1.1 https://github.com/mcharles350/list-iam-users-in-html/blob/master/index.html --output /tmp/index.html
+                    aws s3 cp /tmp/index.html s3://$bucketname/index.html
                   - |+
 
               mode: "000744"
@@ -317,9 +321,4 @@ Resources:
 Outputs:
   BucketName:
     Description: Name of the S3 bucket
-    Value: !Ref BucketName                    
-  BucketNameURL:
-    Description: URL for website hosted on S3
-    Value: !GetAtt
-      - myS3BucketPolicy
-      - BuckeNameURL
+    Value: !Ref BucketName                  
